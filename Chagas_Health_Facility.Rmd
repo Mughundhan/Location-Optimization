@@ -1,0 +1,213 @@
+---
+title: "Chagas_Health_Centers"
+author: "Mughundhan Chandrasekar"
+date: "7/07/2017"
+output: html_document
+---
+
+###**INTRODUCTION**
+
+- People often report to local "health posts", that their house is infested. We can install n (5-10) stations for the people to report.
+- The dataset holds information pertaining to the houses like the geospatial coordinates, predicted probabiity of being infested etc.
+- **AIM**: Build R shiny app, that will accept the number of stations as input (depends upon the budget, entered by the user) and renders a map with spatial distribution of the health posts at optimal locations.
+- In this report, I have clustered the regions and idnetifed the optimal locations for installing the health facility using **K-Means Clustering technique**.
+
+**NOTE: The data munging and feature engineering operations (along with sample visualizations) involved 500+ lines of code in R. As this project is worked for the client based out in Arequipa (Peru), the code is hidden intentionally and only a sample of the dataset is used here to make sure that the anonymity is preserved.**
+
+
+###1. Creating an Environment
+- Involves loading the appropriate libraries
+- Load the dataset into the working environment
+
+```{r warning=FALSE, message=FALSE}
+rm(list=ls())
+library(lubridate) # for csv files
+library(leaflet)   # maps
+library(dplyr)     # for piping purpose %>%
+library(sp)
+library(rgdal)
+library(geosphere)
+library(dismo)
+library(rgeos)
+library(fields)
+
+#library(lpSolve)   # fir linear programming in R
+setwd("/Users/Mughundhan/Data Science Intern/Chagas")
+fdata <- read.csv("fdata.csv")
+```
+
+
+###2. Analyzing the Dataset
+- Let us have a deeper look at the dataset in-order to gain more insights.
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+#head(fdata)
+str(fdata)
+#summary(fdata)
+```
+
+###3. Data Munging
+
+- Let us have a look at the missing values in each column
+- Remove unnecessary columns
+- Take a subset to work on that
+
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+sapply(fdata, function(x) sum(is.na(x))) #Number of Missing Values in each column
+table(is.na(fdata))
+```
+
+- We need only Geocoordinates (latitude, longitude) and the Unicode. Let us remove all other fields.
+
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+drops <- c("date", "week", "LOCAL_DATETIME_new", "LOCAL_TIME","DATETIME1", "PREDICTED_COLOR","PREDICTED_PROBAB_MEAN", "PREDICTED_PROBAB","DATETIME", "TEST_DATA","STATUS_INSPECCION", "CARACT_PREDIO","DATA_ACTION", "GROUP_NAME", "USER_NAME", "UNICODE", "V1")
+
+names(fdata)[names(fdata) == "X"] <- "id"
+
+fdata$id <- as.character(fdata$id)
+fdata <- fdata[ ,!(names(fdata) %in% drops)]
+head(fdata)
+```
+
+
+###3. Data Visualization
+
+- Let us plot the coordinates on google maps using leaflet and visualize their geospatial data spread.
+- Interactive map: Try to zoom-in and zoom-out. Navigate within the allocated window.
+
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+fdata %>%
+  leaflet() %>%
+  addTiles() %>%
+  addCircleMarkers(radius = 4, stroke = FALSE, fillOpacity = 0.3, color = "blue")
+```
+
+
+###4. Data Clustering & Visualization
+
+- Now let us set the number of clusters or the health facilities that needs to be installed.
+- Split the data points based on their geo-coordinates and assign them to each cluster.
+
+```{r warning=FALSE, message=FALSE}
+latitude<-fdata$LATITUDE
+longitude<-fdata$LONGITUDE
+
+km <- kmeans(cbind(latitude, longitude), centers = 6)
+plot(longitude, latitude, col = km$cluster, pch = 20)
+```
+
+###5. Data Centers
+
+####5.1. Identify the Health Centers
+
+- Identify the optimal point in each clustered region to have a health facility
+
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+data_centers <- km$centers
+data_centers <- as.data.frame(data_centers)
+id <- c("Cluster", "Cluster", "Cluster", "Cluster", "Cluster", "Cluster")
+id <- as.data.frame(id)
+data_centers <- cbind(id, data_centers)
+#data_centers
+data_centers$id <- as.character(data_centers$id)
+
+cluster_num <- as.data.frame(km$cluster)
+#nrow(cluster_num)
+#head(km$cluster)
+#nrow(data_centers)
+
+leafIcons <- icons(
+      iconUrl = "/Users/Mughundhan/Data Science Intern/Chagas/hospital.png", 
+      iconWidth = 38, iconHeight = 38,
+      iconAnchorX = 22, iconAnchorY = 38)
+
+data_centers %>%
+  leaflet() %>%
+  addTiles() %>%
+  addMarkers(icon=leafIcons) 
+```
+
+####5.2. Identify the Health Centers among other houses
+
+- Assign the nearby houses to the most optimal centroid or the health facility
+- Zoom-in and check the pop-up to get an idea about the type of facility, location coordinates of each facility / house.
+
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+
+#head(data_centers)
+#head(fdata)
+
+final <- cbind(fdata, cluster_num)
+head(final)
+names(data_centers)[names(data_centers) == "km$cluster"] <- "Cluster_No"
+names(data_centers)[names(data_centers) == "latitude"] <- "LATITUDE"
+names(data_centers)[names(data_centers) == "longitude"] <- "LONGITUDE"
+names(final)[names(final) == "km$cluster"] <- "Cluster_No"
+
+data_centers$Cluster_No <- 1:6
+#head(final)
+#head(data_centers)
+final <- rbind(final, data_centers)
+final$Cluster_No <- as.character(final$Cluster_No)
+#tail(final, 10)
+
+final$Type <- "NA"
+final$Type[final$id == "Cluster"] <- "Health Facility"
+final$Type[final$Type == "NA"] <- "Residence / House"
+tail(final, 10)
+```
+
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+leafIcons <- icons(
+      iconUrl = ~ifelse(final$id == "Cluster", 
+                        "/Users/Mughundhan/Data Science Intern/Chagas/hospital.png", 
+                               "/Users/Mughundhan/Data Science Intern/Chagas/house.png"),
+      
+      iconWidth = 38, iconHeight = 38,
+      iconAnchorX = 22, iconAnchorY = 38)
+
+final %>%
+  leaflet() %>%
+  addTiles() %>%
+  # addCircleMarkers(radius = 6, stroke = FALSE, fillOpacity = 0.5, popup=data_centers$id,
+  #                      color = ~ifelse(final$id == "Cluster", "green", "blue"))
+  addMarkers(popup = paste("Type: ", final$Type, "<br>", 
+                           "Assigned to Cluster Number: ", final$Cluster_No, "<br>",
+                      "Latitude: ", final$LATITUDE, "<br>",
+                      "Longitude: ", final$LONGITUDE),
+                       #color = ~ifelse(final$id == "Cluster", "green", "blue"),
+             icon=leafIcons)      
+```
+
+- **Final Visualization: The interactive map shown below is a clustered version of the previously shown map.**
+- Click the numbered bubbles repeatedly, until the cluster splits to sub groups and the logo is displayed.
+- Click the logo to retreive the information pertaining to the health facility or the residence's geocoordinates.
+
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+leafIcons <- icons(
+      iconUrl = ~ifelse(final$id == "Cluster", 
+                        "/Users/Mughundhan/Data Science Intern/Chagas/hospital.png", 
+                               "/Users/Mughundhan/Data Science Intern/Chagas/house.png"),
+      
+      iconWidth = 38, iconHeight = 38,
+      iconAnchorX = 22, iconAnchorY = 38)
+
+final %>%
+  leaflet() %>%
+  addTiles() %>%
+  addMarkers(clusterOptions = markerClusterOptions(),
+             popup = paste("Type: ", final$Type, "<br>",
+                           "Assigned to Cluster Number: ", final$Cluster_No, "<br>",
+                      "Latitude: ", final$LATITUDE, "<br>",
+                      "Longitude: ", final$LONGITUDE),
+#             popup=final$Cluster_No,
+                       #color = ~ifelse(final$id == "Cluster", "green", "blue"),
+             icon=leafIcons)
+```
+
+###6. RESULT
+
+The optimal locations for installing the health facilities are displayed:
+
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+tail(final)
+```
